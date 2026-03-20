@@ -95,17 +95,51 @@ function dynamic_config() {
     echo "Compiling given environment variables..."
     echo "If defaults are going to get applied, refer to: https://raw.githubusercontent.com/Ylianst/MeshCentral/master/meshcentral-config-schema.json"
 
-    # SESSIONKEY
-    if [[ ${REGEN_SESSIONKEY,,} =~ ^(true|yes)$ ]]; then
-        echo "Regenerating Session-Key because REGENSESSIONKEY is 'true' or 'yes'"
+    # <summary>
+    # Sets the Session Key for cookie encryption.
+    # 1. If SESSION_KEY is provided via ENV, it uses that.
+    # 2. If SESSION_KEY is empty but REGEN_SESSIONKEY is true, it generates a new one (96 chars).
+    # 3. If it's still empty, it generates a secure 64-character random key as a safety fallback.
+    # </summary>
+    if [[ -n "$SESSION_KEY" ]]; then
+        echo "Using SESSION_KEY provided from environment..."
+    elif [[ ${REGEN_SESSIONKEY,,} =~ ^(true|yes)$ ]]; then
+        echo "Regenerating Session-Key because REGEN_SESSIONKEY is set to true..."
         SESSION_KEY=$(tr -dc 'A-Z0-9' < /dev/urandom | fold -w 96 | head -n 1)
-
-        sed -i 's/"_sessionKey"/"sessionKey"/' "$CONFIG_FILE"
-        jq --arg session_key "$SESSION_KEY" \
-            '.settings.sessionKey = $session_key' \
-            "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
     else
-        echo "REGENSESSIONKEY is not 'true' or 'yes', therefore it's being kept as is."
+        echo "SESSION_KEY is empty and REGEN_SESSIONKEY is off. Generating a random secure 64-character key..."
+        SESSION_KEY=$(tr -dc 'A-Za-z0-9' < /dev/urandom | fold -w 64 | head -n 1)
+    fi
+
+    # <summary>
+    # Final step: Apply the determined SESSION_KEY to the config.json file.
+    # We no longer need an 'else' here because SESSION_KEY will ALWAYS have a value by now.
+    # </summary>
+    echo "Applying Session-Key to config.json..."
+    sed -i 's/"_sessionKey"/"sessionKey"/' "$CONFIG_FILE"
+    jq --arg session_key "$SESSION_KEY" \
+        '.settings.sessionKey = $session_key' \
+        "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
+
+
+
+    # <summary>
+    # Sets the main title (Title) and subtitle (Title2) of the MeshCentral web interface.
+    # </summary>
+    if [[ -n $TITLE ]]; then
+        echo "Setting Title... $TITLE"
+        sed -i 's/"_title"/"title"/' "$CONFIG_FILE"
+        jq --arg title "$TITLE" \
+            '.domains[""].title = $title' \
+            "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
+    fi
+
+    if [[ -n $TITLE2 ]]; then
+        echo "Setting Title2... $TITLE2"
+        sed -i 's/"_title2"/"title2"/' "$CONFIG_FILE"
+        jq --arg title2 "$TITLE2" \
+            '.domains[""].title2 = $title2' \
+            "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
     fi
 
     # HOSTNAME
@@ -193,7 +227,10 @@ function dynamic_config() {
         sed -i 's/"AllowFraming":/"_AllowFraming":/g' "$CONFIG_FILE"
     fi
 
-    # trustedProxy
+    # <summary>
+    # Configures the trusted proxy IP settings.
+    # Fixed a copy-paste bug from the original repository where it incorrectly targeted certUrl.
+    # </summary>
     if [[ -n $TRUSTED_PROXY ]]; then
         echo "Setting trustedProxy... - $TRUSTED_PROXY"
 
@@ -209,8 +246,8 @@ function dynamic_config() {
                 "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
         fi
     else
-        echo "Invalid or no REVERSE_PROXY and/or REVERSE_PROXY_TLS_PORT value given, commenting out so default applies... Value(s) given: $REVERSE_PROXY_STRING"
-        sed -i 's/"certUrl":/"_certUrl":/g' "$CONFIG_FILE"
+        echo "No TRUSTED_PROXY value given, commenting out so default applies."
+        sed -i 's/"trustedProxy":/"_trustedProxy":/g' "$CONFIG_FILE"
     fi
 
     # ALLOW_NEW_ACCOUNTS

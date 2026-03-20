@@ -75,7 +75,10 @@ ENV TLSOFFLOAD="false" \
     ALIASPORT="" \
     REDIRALIASPORT="" \
     ADMIN_ACCOUNT="" \
-    ADMIN_PASSWORD="" 
+    ADMIN_PASSWORD="" \
+    TITLE="MeshCentral" \
+    TITLE2="Remote Management" \
+    SESSION_KEY=""
 
 # environment variables
 ENV NODE_ENV="production" \
