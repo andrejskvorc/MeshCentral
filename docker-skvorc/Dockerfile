@@ -1,5 +1,5 @@
 ### STAGE 1 BUILDING.
-FROM debian:trixie-slim AS builder
+FROM alpine:3.23 AS builder
 
 # Any value inside one of the disable ARGs will be accepted.
 ARG DISABLE_EXTRACT="yes"
@@ -8,13 +8,9 @@ ARG DISABLE_TRANSLATE="yes"
 #    NODE_OPTIONS="--max_old_space_size=4096"
 # If your process gets OOM killed, perhaps the above will help.
 
-# Install nodesource's NodeJS
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        nodejs npm && \
-    npm install -g npm@latest && \
+RUN apk add --no-cache --update \
+        nodejs npm; \
     mkdir -p /opt/meshcentral/meshcentral
-
 WORKDIR /opt/meshcentral
 COPY ./ /opt/meshcentral/meshcentral/
 
@@ -53,16 +49,11 @@ RUN rm -rf /opt/meshcentral/meshcentral/docker /opt/meshcentral/meshcentral/node
 
 ### STAGE 2 PRECOMPILE DEPS MODULE
 
-FROM debian:trixie-slim AS dep-compiler
+FROM alpine:3.23 AS dep-compiler
 
-ENV NODE_ENV="production"
-
-# Install general dependencies and nodesource's NodeJS
-RUN apt-get update && \
-    echo -e "----------\nINSTALLING DEBIAN PACKAGES...\n----------"; \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        bash gcc g++ jq make nodejs npm python3 tzdata && \
-    npm install -g npm@latest
+RUN echo -e "----------\nINSTALLING ALPINE PACKAGES...\n----------"; \
+    apk add --no-cache --update \
+        bash gcc g++ jq make nodejs npm python3 tzdata
 
 COPY --from=builder /opt/meshcentral/meshcentral /opt/meshcentral/meshcentral
 WORKDIR /opt/meshcentral/meshcentral
@@ -72,43 +63,24 @@ RUN jq '.dependencies += {"modern-syslog": "1.2.0", "telegram": "2.26.22"}' pack
     && npm ci --omit=dev \
     && npm cache clean --force
 
-### STAGE 3 fun. building from source...
+### STAGE 3 BUILDING.
 
-FROM golang:trixie AS mongo-tools-compiler
+FROM alpine:3.23 AS finalizer
 
-ARG INCLUDE_MONGODB_TOOLS="false"
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        git lsb-release
-
-RUN case "$INCLUDE_MONGODB_TOOLS" in \
-        true|yes|TRUE|YES) \
-            git clone https://github.com/mongodb/mongo-tools /mongo-tools; \
-            cd /mongo-tools; \
-            ./make build -pkgs=mongodump,mongorestore;; \
-        false|no|FALSE|NO) \
-            echo "Not building MongoDB Tools from source, what a shame!"; \
-            mkdir -p /mongo-tools/bin;; \
-        *) \
-            echo "Invalid value for build argument INCLUDE_MONGODB_TOOLS, possible values: 'yes', 'true', 'no' or 'false'"; \
-            exit 1;; \
-    esac
-
-### STAGE 4 BUILDING.
-
-FROM debian:trixie-slim AS finalizer
-
-ARG NODEJS_DOWNLOAD="https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz"
-
-# Copy files from previous layers
+# copy files from previous layer
 COPY --from=dep-compiler /opt/meshcentral/meshcentral /opt/meshcentral/meshcentral
-COPY --from=mongo-tools-compiler /mongo-tools/bin/ /tmp/bin/
+
+#Additional env variables for the entrypoint script, these are not used by MeshCentral itself but by the entrypoint script to generate the config.json based on the template and the environment variables.
+ENV TLSOFFLOAD="false" \
+    ALIASPORT="" \
+    REDIRALIASPORT="" \
+    ADMIN_ACCOUNT="" \
+    ADMIN_PASSWORD="" 
 
 # environment variables
 ENV NODE_ENV="production" \
     CONFIG_FILE="/opt/meshcentral/meshcentral-data/config.json" \
-    DYNAMIC_CONFIG="false"
+    DYNAMIC_CONFIG="true"
 
 # environment variables for the above defined MeshCentral Config.json. Can be done like that following: https://docs.docker.com/reference/dockerfile/#env
 ENV ALLOW_PLUGINS="false" \
@@ -156,28 +128,27 @@ ENV PSQL_HOST="" \
     PSQL_PASS="" \
     PSQL_DATABASE=""
 
-# MariaDB/MySQL Variables.
+# MariaDB/MySQL Variables, Alpine Linux only provides the actual MariaDB binaries.
 ENV MARIADB_HOST="" \
     MARIADB_PORT="3306" \
     MARIADB_USER="" \
     MARIADB_PASS="" \
     MARIADB_DATABASE=""
 
-WORKDIR /opt/meshcentral
-
-RUN apt-get update && \
-    echo -e "----------\nINSTALLING DEBIAN PACKAGES...\n----------"; \
-    apt-get install -y --no-install-recommends --no-install-suggests \
-        bash ca-certificates curl jq nodejs npm tzdata && \
-    npm install -g npm@latest && \    
-    rm -rfv \
-        /var/cache/* \
+RUN echo -e "----------\nINSTALLING ALPINE PACKAGES...\n----------"; \
+    mkdir -p /opt/meshcentral/meshcentral; \
+    apk add --no-cache --update \
+        bash curl jq nodejs npm tzdata && \
+    rm -rf /var/cache/* \
+        /tmp/* \
         /usr/share/man/ \
         /usr/share/doc/ \
         /var/log/* \
         /var/spool/* \
-        /var/tmp/* \
-        /usr/lib/debug/
+        /usr/lib/debug/ && \
+    npm install -g npm@latest
+
+WORKDIR /opt/meshcentral
 
 RUN case "$PREINSTALL_LIBS" in \
         true|yes|TRUE|YES) \
@@ -194,7 +165,7 @@ RUN case "$PREINSTALL_LIBS" in \
 # NOTE: ALL MODULES MUST HAVE A VERSION NUMBER AND THE VERSION MUST MATCH THAT USED IN meshcentraljs mainStart()
 RUN case "$INCLUDE_MONGODB_TOOLS" in \
         true|yes|TRUE|YES) \
-            mv /tmp/bin/* /usr/bin; \
+            apk add --no-cache mongodb-tools && \
             cd meshcentral && \
             echo -e "----------\nPREINSTALLING MONGODB LIBRARIES...\n----------"; \
             npm install mongodb@4.17.2 @mongodb-js/saslprep@1.3.1;; \
@@ -207,7 +178,7 @@ RUN case "$INCLUDE_MONGODB_TOOLS" in \
 
 RUN case "$INCLUDE_POSTGRESQL_TOOLS" in \
         true|yes|TRUE|YES) \
-            apt-get install -y --no-install-recommends --no-install-suggests postgresql-client-17; \
+            apk add --no-cache postgresql-client && \
             cd meshcentral && \
             echo -e "----------\nPREINSTALLING POSTGRESQL LIBRARIES...\n----------"; \
             npm install pg@8.14.1;; \
@@ -220,7 +191,7 @@ RUN case "$INCLUDE_POSTGRESQL_TOOLS" in \
 
 RUN case "$INCLUDE_MARIADB_TOOLS" in \
         true|yes|TRUE|YES) \
-            apt-get install -y --no-install-recommends --no-install-suggests default-mysql-client mariadb-client; \
+            apk add --no-cache mariadb-client && \
             cd meshcentral && \
             echo -e "----------\nPREINSTALLING MARIADB/MYSQL LIBRARIES...\n----------"; \
             npm install mariadb@3.4.0 mysql2@3.11.4;; \
@@ -247,7 +218,7 @@ VOLUME /opt/meshcentral/meshcentral-web
 VOLUME /opt/meshcentral/meshcentral-backups
 
 # Copy images from Git repo, place it before ending so recompilation can make good use of cache.
-COPY ./docker/entrypoint.sh  /opt/meshcentral/entrypoint.sh
-COPY ./docker/config.json.template /opt/meshcentral/config.json.template
+COPY ./docker-skvorc/entrypoint.sh  /opt/meshcentral/entrypoint.sh
+COPY ./docker-skvorc/config.json.template /opt/meshcentral/config.json.template
 
 ENTRYPOINT  ["/bin/bash", "/opt/meshcentral/entrypoint.sh"]

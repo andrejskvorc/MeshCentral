@@ -285,6 +285,44 @@ function dynamic_config() {
         sed -i 's/"certUrl":/"_certUrl":/g' "$CONFIG_FILE"
     fi
 
+    # <summary>
+    # Custom modifications for CapRover Nginx Reverse Proxy
+    # Ensures TLSOffload and AliasPorts are correctly injected into config.json
+    # </summary>
+
+    # TLSOFFLOAD
+    if [[ -n $TLSOFFLOAD ]]; then
+        echo "Setting TLSOffload... $TLSOFFLOAD"
+        # Checks if the value is a boolean (true/false) or a string (like "127.0.0.1" or CapRover IP range)
+        if [[ ${TLSOFFLOAD,,} =~ ^(true|false)$ ]]; then
+            jq --argjson tlsoffload "${TLSOFFLOAD,,}" \
+                '.settings.TLSOffload = $tlsoffload' \
+                "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
+        else
+            jq --arg tlsoffload "$TLSOFFLOAD" \
+                '.settings.TLSOffload = $tlsoffload' \
+                "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
+        fi
+    fi
+
+    # ALIASPORT
+    if [[ -n $ALIASPORT ]]; then
+        echo "Setting AliasPort... $ALIASPORT"
+        sed -i 's/"_aliasPort"/"aliasPort"/' "$CONFIG_FILE"
+        jq --arg port "$ALIASPORT" \
+            '.settings.aliasPort = ($port | tonumber)' \
+            "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
+    fi
+
+    # REDIRALIASPORT
+    if [[ -n $REDIRALIASPORT ]]; then
+        echo "Setting RedirAliasPort... $REDIRALIASPORT"
+        sed -i 's/"_redirAliasPort"/"redirAliasPort"/' "$CONFIG_FILE"
+        jq --arg port "$REDIRALIASPORT" \
+            '.settings.redirAliasPort = ($port | tonumber)' \
+            "$CONFIG_FILE" > temp_config.json && mv temp_config.json "$CONFIG_FILE"
+    fi
+
     cat "$CONFIG_FILE"
 }
 
@@ -398,6 +436,23 @@ fi
 node /opt/meshcentral/meshcentral/meshcentral --configfile "${CONFIG_FILE}" "${ARGS}" >> /proc/1/fd/1 &
 meshcentral_pid=$!
 
+# <summary>
+# Auto-provision the initial administrator account.
+# MeshCentral will gracefully ignore this command if the user already exists.
+# </summary>
+if [[ -n "$ADMIN_ACCOUNT" ]] && [[ -n "$ADMIN_PASSWORD" ]]; then
+    echo "Waiting for MeshCentral DB to initialize before provisioning admin account..."
+    # Give the Node.js server and database time to fully boot
+    sleep 10 
+    
+    echo "Executing admin creation script..."
+    # We use '|| true' so the container doesn't crash if the user already exists
+    node /opt/meshcentral/meshcentral/meshcentral --configfile "${CONFIG_FILE}" --createaccount "$ADMIN_ACCOUNT" --pass "$ADMIN_PASSWORD" || true
+    
+    echo "Admin provisioning step completed."
+fi
+
+# Wait for the main MeshCentral process to keep the container alive
 wait "$meshcentral_pid"
 
 ### END MAIN CHAIN

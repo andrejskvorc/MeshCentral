@@ -105,10 +105,17 @@ ARG NODEJS_DOWNLOAD="https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.ta
 COPY --from=dep-compiler /opt/meshcentral/meshcentral /opt/meshcentral/meshcentral
 COPY --from=mongo-tools-compiler /mongo-tools/bin/ /tmp/bin/
 
+#Additional env variables for the entrypoint script, these are not used by MeshCentral itself but by the entrypoint script to generate the config.json based on the template and the environment variables.
+ENV TLSOFFLOAD="false" \
+    ALIASPORT="" \
+    REDIRALIASPORT="" \
+    ADMIN_ACCOUNT="" \
+    ADMIN_PASSWORD="" 
+
 # environment variables
 ENV NODE_ENV="production" \
     CONFIG_FILE="/opt/meshcentral/meshcentral-data/config.json" \
-    DYNAMIC_CONFIG="false"
+    DYNAMIC_CONFIG="true"
 
 # environment variables for the above defined MeshCentral Config.json. Can be done like that following: https://docs.docker.com/reference/dockerfile/#env
 ENV ALLOW_PLUGINS="false" \
@@ -247,7 +254,7 @@ VOLUME /opt/meshcentral/meshcentral-web
 VOLUME /opt/meshcentral/meshcentral-backups
 
 # Copy images from Git repo, place it before ending so recompilation can make good use of cache.
-COPY ./docker/entrypoint.sh  /opt/meshcentral/entrypoint.sh
-COPY ./docker/config.json.template /opt/meshcentral/config.json.template
+COPY ./entrypoint.sh  /opt/meshcentral/entrypoint.sh
+COPY ./config.json.template /opt/meshcentral/config.json.template
 
 ENTRYPOINT  ["/bin/bash", "/opt/meshcentral/entrypoint.sh"]
